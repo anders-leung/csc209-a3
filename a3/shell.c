@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
  *       absolute path:  cd /u/bogdan/csc209/assignment3/
  */
 int execute_cd(char** words) {
-	printf("execute cd\n");	
+
 	/** 
 	 * TODO: 
 	 * The first word contains the "cd" string, the second one contains 
@@ -108,8 +108,6 @@ int execute_cd(char** words) {
 		(words[1] == NULL)) {
 		return EXIT_FAILURE;
 	}
-
-
 
 	/**
 	 * TODO: 
@@ -155,7 +153,7 @@ int execute_cd(char** words) {
  * followed by a NULL token. 
  */
 int execute_command(char **tokens) {
-	printf("execute command\n");
+
 	/**
 	 * TODO: execute a program, based on the tokens provided.
 	 * The first token is the command name, the rest are the arguments 
@@ -174,11 +172,9 @@ int execute_command(char **tokens) {
 
 	int r;
 	if ((r = execvp(tokens[0], tokens)) == -1) {
-		printf("exec ran into a problem\n");
 		perror("bad_command");
 		return EXIT_FAILURE;
 	}
-	printf("		execute command finished and has exited\n");
 	exit(0);
 }
 
@@ -200,12 +196,13 @@ int execute_nonbuiltin(simple_command *s) {
 	 *   function above).
 	 * This function returns only if the execution of the program fails.
 	 */
-	printf("executing nonbuiltin\n");
+
 	int e;
 	if ((e = extract_redirections(s->tokens, s)) == -1) {
 		perror("extract_redirections");
+		exit(1);
 	}
-
+		
 	char *fields[3];
 	fields[0] = s->in;
 	fields[1] = s->out;
@@ -214,18 +211,15 @@ int execute_nonbuiltin(simple_command *s) {
 	int i;
 	for (i = 0; i < 3; i++) {
 		if (fields[i] != NULL) {
-			printf("You're in %d\n", i);
+
 			int fd;
-			fd = open(fields[i], O_RDWR | O_CREAT | O_APPEND, 0600);
-			
-			if (fd == -1) {
-				perror("cannot open file");
-			}
+			int std = STDOUT_FILENO;
 
-			int std = STDIN_FILENO;
+			fd = open(fields[i], O_RDWR | O_CREAT | O_EXCL, 0600);
 
-			if (fields[i] == s->out) {
-				std = STDOUT_FILENO;
+			if (fields[i] == s->in) {
+				std = STDIN_FILENO;
+				fd = open(fields[i], O_RDWR);
 			}
 
 			else if (fields[i] == s->err) {
@@ -233,12 +227,19 @@ int execute_nonbuiltin(simple_command *s) {
 			}
 
 			int r;
+			
+			if (fd == -1) {
+				perror("cannot open file");
+				exit(-1);
+			}
+
 			if ((r = dup2(fd, std)) == -1) {
 				perror("problems redirecting");
+				exit(-1);
 			}
 		}
 	}			
-
+	
 	return execute_command(s->tokens);
 }
 
@@ -247,7 +248,7 @@ int execute_nonbuiltin(simple_command *s) {
  * Executes a simple command (no pipes).
  */
 int execute_simple_command(simple_command *cmd) {
-printf("this is a simple command: %s\n", cmd->tokens[0]);
+
 	/**
 	 * TODO: 
 	 * Check if the command is builtin.
@@ -265,7 +266,7 @@ printf("this is a simple command: %s\n", cmd->tokens[0]);
 	}
 
 	else if (is_builtin(cmd->tokens[0]) == BUILTIN_EXIT) {
-		exit(0);
+		return -1;
 	}
 
 	else {
@@ -278,7 +279,6 @@ printf("this is a simple command: %s\n", cmd->tokens[0]);
 			int status;
 			if (wait(&status) != -1) {
 				if (WIFEXITED(status)) {
-					printf("child exited\n");
 				}
 			}
 
@@ -298,7 +298,7 @@ printf("this is a simple command: %s\n", cmd->tokens[0]);
  * together with a pipe operator.
  */
 int execute_complex_command(command *c) {
-	printf("execute complex command\n");
+
 	/**
 	 * TODO:
 	 * Check if this is a simple command, using the scmd field.
@@ -309,7 +309,7 @@ int execute_complex_command(command *c) {
 	 */
 	
 	if (c->scmd != NULL) {
-		return execute_simple_command(c->scmd);
+		return execute_nonbuiltin(c->scmd);
 	}
 
 	/** 
@@ -363,11 +363,14 @@ int execute_complex_command(command *c) {
 
 		if (fork1 == 0) {
 			close(fd[0]);
-			if (dup2(STDOUT_FILENO, fd[1]) == -1) {
+			close(STDOUT_FILENO);
+			if (dup2(fd[1], STDOUT_FILENO) == -1) {
 				perror("dup2");
 				exit(1);
 			}
-			return execute_complex_command(c->cmd1);
+			close(fd[1]);
+			execute_complex_command(c->cmd1);
+			exit(0);
 		}
 
 		else {
@@ -378,34 +381,23 @@ int execute_complex_command(command *c) {
 			}
 
 			if (fork2 == 0) {
-				if (dup2(STDIN_FILENO, fd[0]) == -1) {
+				close(fd[1]);
+				close(STDIN_FILENO);
+				if (dup2(fd[0], STDIN_FILENO) == -1) {
 					perror("dup2");
 					exit(1);
 				}
-				return execute_complex_command(c->cmd2);
+				close(fd[0]);
+				execute_complex_command(c->cmd2);
+				exit(0);
 			}
 
 			else {
 				close(fd[1]);
 				close(fd[0]);
 				int status;
-				if (wait(&status) != -1) {
-					if (WIFEXITED(status)) {
-					}
-
-					else {
-						printf("Child exited abnormally\n");
-					}
-				}
-
-				if (wait(&status) != -1) {
-					if (WIFEXITED(status)) {
-					}
-
-					else {
-						printf("Child exited abnormally\n");
-					}
-				}
+				wait(&status);
+				wait(&status);
 			}
 		}
 	}
